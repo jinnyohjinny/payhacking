@@ -146,6 +146,8 @@ func compareHeaders(original, new http.Header) (bool, []string) {
 		"Set-Cookie":    true,
 		"Cache-Control": true,
 		"Connection":    true,
+		"Cf-Ray":        true,
+		"Age":           true,
 	}
 
 	var differences []string
