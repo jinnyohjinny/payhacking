@@ -11,9 +11,26 @@ import (
 	"time"
 )
 
+// ANSI color codes
+const (
+	ColorReset   = "\033[0m"
+	ColorRed     = "\033[31m"
+	ColorGreen   = "\033[32m"
+	ColorYellow  = "\033[33m"
+	ColorBlue    = "\033[34m"
+	ColorMagenta = "\033[35m"
+	ColorCyan    = "\033[36m"
+	ColorWhite   = "\033[37m"
+	ColorBold    = "\033[1m"
+)
+
 func main() {
 	url := flag.String("url", "https://example.com", "url target")
 	flag.Parse()
+
+	// Print banner
+	fmt.Printf("%s%sHTTP Header Tester%s\n", ColorBold, ColorCyan, ColorReset)
+	fmt.Printf("%sTesting URL:%s %s%s%s\n\n", ColorYellow, ColorReset, ColorBlue, *url, ColorReset)
 
 	customTransport := &http.Transport{
 		ForceAttemptHTTP2: false,
@@ -36,9 +53,11 @@ func main() {
 		Timeout:   30 * time.Second,
 	}
 
+	// Initial request
+	fmt.Printf("%s[+]%s Making initial request...\n", ColorGreen, ColorReset)
 	req, err := http.NewRequest("GET", *url, nil)
 	if err != nil {
-		fmt.Println("Error membuat request:", err)
+		fmt.Printf("%s[!]%s Error making request: %s%v%s\n", ColorRed, ColorReset, ColorYellow, err, ColorReset)
 		return
 	}
 
@@ -46,80 +65,117 @@ func main() {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Println("Error melakukan request:", err)
+		fmt.Printf("%s[!]%s Error performing request: %s%v%s\n", ColorRed, ColorReset, ColorYellow, err, ColorReset)
 		return
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Println("Error membaca body:", err)
+		fmt.Printf("%s[!]%s Error reading body: %s%v%s\n", ColorRed, ColorReset, ColorYellow, err, ColorReset)
 		return
 	}
+
 	originalBody := string(bodyBytes)
 	originalStatus := resp.Status
 	originalHeaders := resp.Header
-
 	protocol := resp.Proto
-	fmt.Println("Protocol:", protocol)
-	fmt.Println("Status Code:", resp.Status)
 
+	fmt.Printf("\n%s%sBaseline Information:%s\n", ColorBold, ColorCyan, ColorReset)
+	fmt.Printf("%sProtocol:%s %s%s%s\n", ColorYellow, ColorReset, ColorGreen, protocol, ColorReset)
+	fmt.Printf("%sStatus Code:%s %s%s%s\n", ColorYellow, ColorReset, statusColor(resp.StatusCode), resp.Status, ColorReset)
+	fmt.Printf("%sHeaders Count:%s %s%d%s\n", ColorYellow, ColorReset, ColorGreen, len(resp.Header), ColorReset)
+
+	// Test each header
+	fmt.Printf("\n%s%sStarting Header Tests:%s\n", ColorBold, ColorCyan, ColorReset)
 	for header := range resp.Header {
-		fmt.Println("\nTesting Header:", header+":")
+		fmt.Printf("\n%s[→]%s Testing Header: %s%s%s\n", ColorMagenta, ColorReset, ColorCyan, header, ColorReset)
 
 		if protocol == "HTTP/2.0" && !isValidHopByHopHeader(header) {
-			fmt.Println("⚠ Skipping invalid Connection header for HTTP/2:", header)
+			fmt.Printf("%s[⚠]%s Skipping invalid Connection header for HTTP/2: %s%s%s\n",
+				ColorYellow, ColorReset, ColorCyan, header, ColorReset)
 			continue
 		}
 
 		req, err := http.NewRequest("GET", *url, nil)
 		if err != nil {
-			fmt.Println("Error membuat request:", err)
-			return
+			fmt.Printf("%s[!]%s Error creating request: %s%v%s\n", ColorRed, ColorReset, ColorYellow, err, ColorReset)
+			continue
 		}
 
-		req.Header.Set("Connection", header) // Set header Connection ke header saat ini
+		req.Header.Set("Connection", header)
 		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
 
 		hopResp, err := client.Do(req)
 		if err != nil {
-			fmt.Println("Error:", err)
+			fmt.Printf("%s[!]%s Error: %s%v%s\n", ColorRed, ColorReset, ColorYellow, err, ColorReset)
 			continue
 		}
 		defer hopResp.Body.Close()
 
 		hopBodyBytes, err := io.ReadAll(hopResp.Body)
 		if err != nil {
-			fmt.Println("Error membaca hop-by-hop body:", err)
+			fmt.Printf("%s[!]%s Error reading response body: %s%v%s\n", ColorRed, ColorReset, ColorYellow, err, ColorReset)
 			continue
 		}
 		hopBody := string(hopBodyBytes)
 
-		// Bandingkan Status Code
+		// Compare Status Code
 		if originalStatus != hopResp.Status {
-			fmt.Printf("🚨 Status Code Berbeda! Original=%s, Modified=%s\n", originalStatus, hopResp.Status)
+			fmt.Printf("%s[✗]%s Status Code Changed! %sOriginal=%s %sNew=%s%s\n",
+				ColorRed, ColorReset,
+				ColorYellow, originalStatus,
+				ColorRed, hopResp.Status, ColorReset)
+		} else {
+			fmt.Printf("%s[✓]%s Status Code Unchanged: %s%s%s\n",
+				ColorGreen, ColorReset,
+				statusColor(hopResp.StatusCode), hopResp.Status, ColorReset)
 		}
 
-		// Bandingkan Body
+		// Compare Body
 		if originalBody != hopBody {
-			fmt.Println("🚨 Body Berbeda!")
-			fmt.Println("Original Body Length:", len(originalBody))
-			fmt.Println("Modified Body Length:", len(hopBody))
+			fmt.Printf("%s[✗]%s Body Changed! %sOriginal=%d bytes %sNew=%d bytes%s\n",
+				ColorRed, ColorReset,
+				ColorYellow, len(originalBody),
+				ColorRed, len(hopBody), ColorReset)
+		} else {
+			fmt.Printf("%s[✓]%s Body Unchanged: %s%d bytes%s\n",
+				ColorGreen, ColorReset,
+				ColorGreen, len(hopBody), ColorReset)
 		}
 
+		// Compare Headers
 		headersEqual, diff := compareHeaders(originalHeaders, hopResp.Header)
 		if !headersEqual {
-			fmt.Println("🚨 Header Berbeda!")
-			fmt.Println("Perbedaan:")
+			fmt.Printf("%s[✗]%s Header Differences Found:%s\n", ColorRed, ColorReset, ColorReset)
 			for _, d := range diff {
-				fmt.Println(" -", d)
+				fmt.Printf("  %s- %s%s\n", ColorRed, d, ColorReset)
 			}
+		} else {
+			fmt.Printf("%s[✓]%s Headers Unchanged%s\n", ColorGreen, ColorReset, ColorReset)
 		}
 
-		// Jika SEMUA sama, berarti tidak ada perubahan
+		// Final verdict
 		if originalStatus == hopResp.Status && originalBody == hopBody && headersEqual {
-			fmt.Println("✅ Tidak ada perubahan (aman)")
+			fmt.Printf("%s[✔]%s No changes detected (secure)%s\n", ColorGreen, ColorReset, ColorReset)
+		} else {
+			fmt.Printf("%s[⚠]%s Changes detected (potential vulnerability)%s\n", ColorYellow, ColorReset, ColorReset)
 		}
+	}
+}
+
+func statusColor(code int) string {
+	switch {
+	case code >= 200 && code < 300:
+		return ColorGreen
+	case code >= 300 && code < 400:
+		return ColorYellow
+	case code >= 400 && code < 500:
+		return ColorRed
+	case code >= 500:
+		return ColorMagenta
+	default:
+		return ColorReset
 	}
 }
 
@@ -159,30 +215,31 @@ func compareHeaders(original, new http.Header) (bool, []string) {
 
 		newValues, exists := new[key]
 		if !exists {
-			differences = append(differences, fmt.Sprintf("Header '%s' hilang di respons baru", key))
+			differences = append(differences, fmt.Sprintf("Header '%s' missing in new response", key))
 			continue
 		}
 
 		if len(values) != len(newValues) {
-			differences = append(differences, fmt.Sprintf("Jumlah nilai header '%s' berbeda: %d vs %d", key, len(values), len(newValues)))
+			differences = append(differences,
+				fmt.Sprintf("Header '%s' value count changed (%d → %d)", key, len(values), len(newValues)))
 			continue
 		}
 
 		for i := range values {
 			if strings.TrimSpace(values[i]) != strings.TrimSpace(newValues[i]) {
-				differences = append(differences, fmt.Sprintf("Nilai header '%s' berbeda: '%s' vs '%s'", key, values[i], newValues[i]))
+				differences = append(differences,
+					fmt.Sprintf("Header '%s' value changed: '%s' → '%s'", key, values[i], newValues[i]))
 			}
 		}
 	}
 
-	// Cek header baru yang tidak ada di original
 	for key := range new {
 		if ignoreHeaders[key] {
 			continue
 		}
 
 		if _, exists := original[key]; !exists {
-			differences = append(differences, fmt.Sprintf("Header baru '%s' muncul di respons baru", key))
+			differences = append(differences, fmt.Sprintf("New header '%s' appeared", key))
 		}
 	}
 
